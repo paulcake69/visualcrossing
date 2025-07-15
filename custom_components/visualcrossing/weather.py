@@ -1,8 +1,8 @@
 """Support for WeatherFlow Forecast weather service."""
+
 from __future__ import annotations
 
 import logging
-
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -45,23 +45,20 @@ async def async_setup_entry(
     coordinator: VCDataUpdateCoordinator = hass.data[DOMAIN][config_entry.entry_id]
     entity_registry = er.async_get(hass)
 
-    name: str | None
+    name: str | None = config_entry.data.get(CONF_NAME) or DEFAULT_NAME
     is_metric = hass.config.units is METRIC_SYSTEM
 
-    if (name := config_entry.data.get(CONF_NAME)) and name is None:
-        name = DEFAULT_NAME
-    elif TYPE_CHECKING:
-        assert isinstance(name, str)
-
-    entities = [VCWeather(coordinator, config_entry.data, False, name, is_metric)]
+    entities: list[SingleCoordinatorWeatherEntity] = [
+        VCWeather(coordinator, config_entry.data, False, name, is_metric)
+    ]
 
     # Add hourly entity to legacy config entries
     if entity_registry.async_get_entity_id(
         WEATHER_DOMAIN, DOMAIN, _calculate_unique_id(config_entry.data, True)
     ):
-        name = f"{name} hourly"
+        name_hourly = f"{name} hourly"
         entities.append(
-            VCWeather(coordinator, config_entry.data, True, name, is_metric)
+            VCWeather(coordinator, config_entry.data, True, name_hourly, is_metric)
         )
 
     async_add_entities(entities)
@@ -69,17 +66,14 @@ async def async_setup_entry(
 
 def _calculate_unique_id(config: MappingProxyType[str, Any], hourly: bool) -> str:
     """Calculate unique ID."""
-    name_appendix = ""
-    if hourly:
-        name_appendix = "-hourly"
-
-    return f"{config[CONF_LATITUDE]}-{config[CONF_LONGITUDE]}{name_appendix}"
+    suffix = "-hourly" if hourly else ""
+    return f"{config[CONF_LATITUDE]}-{config[CONF_LONGITUDE]}{suffix}"
 
 
 def format_condition(condition: str) -> str:
-    """Return condition from dict CONDITIONS_MAP."""
-    for key, value in CONDITIONS_MAP.items():
-        if condition in value:
+    """Return condition name from CONDITIONS_MAP."""
+    for key, values in CONDITIONS_MAP.items():
+        if condition in values:
             return key
     return condition
 
@@ -113,7 +107,7 @@ class VCWeather(SingleCoordinatorWeatherEntity[VCDataUpdateCoordinator]):
         self._hourly = hourly
         self._attr_entity_registry_enabled_default = not hourly
         self._attr_device_info = DeviceInfo(
-            name="Weather",
+            name="Visual Crossing",
             entry_type=DeviceEntryType.SERVICE,
             identifiers={(DOMAIN,)},  # type: ignore[arg-type]
             manufacturer="Visual Crossing",
@@ -125,10 +119,8 @@ class VCWeather(SingleCoordinatorWeatherEntity[VCDataUpdateCoordinator]):
     @property
     def condition(self) -> str | None:
         """Return the current condition."""
-        condition = self.coordinator.data.current_weather_data.icon
-        if condition is None:
-            return None
-        return format_condition(condition)
+        icon = self.coordinator.data.current_weather_data.icon
+        return format_condition(icon) if icon else None
 
     @property
     def native_temperature(self) -> float | None:
@@ -157,7 +149,7 @@ class VCWeather(SingleCoordinatorWeatherEntity[VCDataUpdateCoordinator]):
 
     @property
     def native_wind_gust_speed(self) -> float | None:
-        """Return the wind gust speed in native units."""
+        """Return the wind gust speed."""
         return self.coordinator.data.current_weather_data.wind_gust_speed
 
     @property
@@ -177,7 +169,7 @@ class VCWeather(SingleCoordinatorWeatherEntity[VCDataUpdateCoordinator]):
 
     @property
     def extra_state_attributes(self):
-        """Return non standard attributes."""
+        """Return non-standard attributes."""
         return {
             ATTR_DESCRIPTION: self.coordinator.data.current_weather_data.description,
             ATTR_LAST_UPDATED: self.coordinator.data.current_weather_data.datetime.isoformat(),
@@ -186,81 +178,50 @@ class VCWeather(SingleCoordinatorWeatherEntity[VCDataUpdateCoordinator]):
     def _forecast(self, hourly: bool) -> list[Forecast] | None:
         """Return the forecast array."""
         ha_forecast: list[Forecast] = []
-
         if hourly:
             for item in self.coordinator.data.hourly_forecast:
-                condition = None if item.icon is None else format_condition(item.icon)
-                _LOGGER.debug(item.datetime.isoformat())
-                datetime = item.datetime.isoformat()
-                humidity = item.humidity
-                precipitation_probability = item.precipitation_probability
-                native_precipitation = item.precipitation
-                cloud_cover = item.cloud_cover
-                native_pressure = item.pressure
-                native_temperature = item.temperature
-                native_apparent_temperature = item.apparent_temperature
-                wind_bearing = item.wind_bearing
-                native_wind_gust_speed = item.wind_gust_speed
-                native_wind_speed = item.wind_speed
-                uv_index = item.uv_index
-
-                ha_item = {
-                    "condition": condition,
-                    "datetime": datetime,
-                    "humidity": humidity,
-                    "precipitation_probability": precipitation_probability,
-                    "native_precipitation": native_precipitation,
-                    "cloud_coverage": cloud_cover,
-                    "native_pressure": native_pressure,
-                    "native_temperature": native_temperature,
-                    "native_apparent_temperature": native_apparent_temperature,
-                    "wind_bearing": wind_bearing,
-                    "native_wind_gust_speed": native_wind_gust_speed,
-                    "native_wind_speed": native_wind_speed,
-                    "uv_index": uv_index,
-                }
-                ha_forecast.append(ha_item)
+                cond = format_condition(item.icon) if item.icon else None
+                ha_forecast.append(
+                    {
+                        "condition": cond,
+                        "datetime": item.datetime.isoformat(),
+                        "humidity": item.humidity,
+                        "precipitation_probability": item.precipitation_probability,
+                        "native_precipitation": item.precipitation,
+                        "cloud_coverage": item.cloud_cover,
+                        "native_pressure": item.pressure,
+                        "native_temperature": item.temperature,
+                        "native_apparent_temperature": item.apparent_temperature,
+                        "wind_bearing": item.wind_bearing,
+                        "native_wind_gust_speed": item.wind_gust_speed,
+                        "native_wind_speed": item.wind_speed,
+                        "uv_index": item.uv_index,
+                    }
+                )
         else:
             for item in self.coordinator.data.daily_forecast:
-                condition = None if item.icon is None else format_condition(item.icon)
-                datetime = item.datetime.isoformat()
-                precipitation_probability = item.precipitation_probability
-                cloud_cover = item.cloud_cover
-                native_temperature = item.temperature
-                native_templow = item.temp_low
-                native_precipitation = item.precipitation
-                wind_bearing = int(item.wind_bearing)
-                native_wind_speed = item.wind_speed
-
-                ha_item = {
-                    "condition": condition,
-                    "datetime": datetime,
-                    "precipitation_probability": precipitation_probability,
-                    "native_precipitation": native_precipitation,
-                    "cloud_coverage": cloud_cover,
-                    "native_temperature": native_temperature,
-                    "native_templow": native_templow,
-                    "wind_bearing": wind_bearing,
-                    "native_wind_speed": native_wind_speed,
-                }
-                ha_forecast.append(ha_item)
-
+                cond = format_condition(item.icon) if item.icon else None
+                ha_forecast.append(
+                    {
+                        "condition": cond,
+                        "datetime": item.datetime.isoformat(),
+                        "precipitation_probability": item.precipitation_probability,
+                        "native_precipitation": item.precipitation,
+                        "cloud_coverage": item.cloud_cover,
+                        "native_temperature": item.temperature,
+                        "native_templow": item.temp_low,
+                        "wind_bearing": int(item.wind_bearing),
+                        "native_wind_speed": item.wind_speed,
+                    }
+                )
         return ha_forecast
-
-    # For backwards compatability, uncomment the below.
-    # Will stop working with HA 2024.3
-
-    # @property
-    # def forecast(self) -> list[Forecast] | None:
-    #     """Return the forecast array."""
-    #     return self._forecast(False)
 
     @callback
     def _async_forecast_daily(self) -> list[Forecast] | None:
-        """Return the daily forecast in native units."""
+        """Return the daily forecast."""
         return self._forecast(False)
 
     @callback
     def _async_forecast_hourly(self) -> list[Forecast] | None:
-        """Return the hourly forecast in native units."""
+        """Return the hourly forecast."""
         return self._forecast(True)
