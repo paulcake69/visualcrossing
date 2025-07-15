@@ -36,33 +36,31 @@ from .const import DOMAIN, CONF_DAYS
 
 _LOGGER = logging.getLogger(__name__)
 
-# Tell HA we have both weather and sensor platforms
+# 1) We have both weather and sensor platforms now
 PLATFORMS = [Platform.WEATHER, Platform.SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Set up Visual Crossing from a config entry."""
-    # 1) Original weather coordinator
+    # — weather coordinator
     coordinator = VCDataUpdateCoordinator(hass, config_entry)
     await coordinator.async_config_entry_first_refresh()
-
     hass.data.setdefault(DOMAIN, {})[config_entry.entry_id] = coordinator
 
-    # Reload when options change
+    # reload on options change
     config_entry.async_on_unload(
         config_entry.add_update_listener(async_update_entry)
     )
 
-    # 2) New precipitation coordinator (1 day past → 7 days future)
+    # — precipitation coordinator (past 1 day → next 7 days)
     api_key = config_entry.data[CONF_API_KEY]
     lat = config_entry.data[CONF_LATITUDE]
     lon = config_entry.data[CONF_LONGITUDE]
     precip_coord = VCPrecipCoordinator(hass, api_key, lat, lon)
     await precip_coord.async_refresh()
-    # Store under a different key so we don’t clobber the weather coordinator
     hass.data[DOMAIN][config_entry.entry_id + "_precip"] = precip_coord
 
-    # 3) Tell HA to load both platforms
+    # 3) forward both platforms
     await hass.config_entries.async_forward_entry_setups(
         config_entry, PLATFORMS
     )
@@ -195,7 +193,6 @@ class VCPrecipCoordinator(DataUpdateCoordinator[dict]):
             "include": "hours,obs",
             "elements": "datetime,precip",
             "key": self._api_key,
-            "contentType": "json",
         }
         resp = await session.get(url, params=params)
         resp.raise_for_status()
