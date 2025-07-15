@@ -5,7 +5,7 @@ from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
 
-from .weather import VCPrecipCoordinator, DOMAIN
+from . import VCPrecipCoordinator, DOMAIN
 
 ICON_PAST = "mdi:water"
 ICON_FUTURE = "mdi:weather-rainy"
